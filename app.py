@@ -3,14 +3,10 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import json # Adicionado para garantir compatibilidade com st.secrets
 
-# Importe as funções do seu etl.py
+# importe as funções do seu etl.py (mesmo diretório)
 from etl import (
-    renew_access_token,
-    fetch_all_activities,
-    transform_activities,
-    save_csv, # << Funções que precisam ser chamadas com o OUT_DIR
+    load_activities,
     create_distance_over_time, 
     create_activity_type_pie,
     create_pace_trend,
@@ -26,7 +22,7 @@ OUT_DIR = BASE_DIR / "plots"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 # ==========================================
 
-# === HELPER FUNCTIONS (Mantidas do seu código original) ===
+# === HELPER FUNCTIONS (Atualizadas com a cor FC4C02 e Layout) ===
 
 def format_pace_minutes(pace_min):
     """Formata pace em minutos para MM:SS"""
@@ -68,11 +64,11 @@ def total_runs_by_km(df_in):
     df_in["duration_min"] = pd.to_numeric(df_in["duration_min"], errors="coerce").fillna(0)
     
     fig = px.scatter(df_in, x="distance_km", y="duration_min", size="duration_min",
-                      color_discrete_sequence=[STRAVA_ORANGE], 
-                      hover_name="name",
-                      title="Distribuição de corridas por distância (Duração vs. Distância)",
-                      labels={"distance_km":"Distância (km)", "duration_min": "Duração (min)"},
-                      trendline=None)
+                     color_discrete_sequence=[STRAVA_ORANGE], 
+                     hover_name="name",
+                     title="Distribuição de corridas por distância (Duração vs. Distância)",
+                     labels={"distance_km":"Distância (km)", "duration_min": "Duração (min)"},
+                     trendline=None)
     
     fig.update_layout(xaxis_title=None, yaxis_title=None) 
     
@@ -102,9 +98,9 @@ def pace_by_category(df_in):
     if cat_pace.empty: return None
     
     fig = px.bar(cat_pace, x="category", y="pace_min_km",
-                      title="Pace médio por categoria",
-                      labels={"category":"Categoria","pace_min_km":"Pace (min/km)"},
-                      text=cat_pace["pace_min_km"].apply(lambda x: format_pace_minutes(x)))
+                     title="Pace médio por categoria",
+                     labels={"category":"Categoria","pace_min_km":"Pace (min/km)"},
+                     text=cat_pace["pace_min_km"].apply(lambda x: format_pace_minutes(x)))
     
     fig.update_traces(
         textposition="outside",
@@ -121,48 +117,6 @@ def pace_by_category(df_in):
     
     return fig
 
-# === FUNÇÃO DE CARREGAMENTO DE DADOS (CRÍTICA DE SEGURANÇA) ===
-
-@st.cache_data(ttl=3600)
-def load_activities(refresh_token_input: str | None, per_page: int, max_pages: int) -> pd.DataFrame:
-    """Função para buscar dados do Strava, usando st.secrets para credenciais."""
-    
-    # 1. LEITURA SEGURA DOS SEGREDOS (Acessa a seção [strava_api])
-    try:
-        # ATENÇÃO: As chaves precisam ser lidas como string e o CLIENT_ID convertido para int
-        client_id = int(st.secrets["strava_api"]["CLIENT_ID"]) 
-        client_secret = st.secrets["strava_api"]["CLIENT_SECRET"]
-        secret_token = st.secrets["strava_api"].get("REFRESH_TOKEN") 
-
-    except KeyError as e:
-        st.error(f"Erro de configuração: A chave '{e}' não foi encontrada nas configurações de Segredos do Streamlit Cloud. Configure a seção [strava_api].")
-        return pd.DataFrame()
-    except ValueError:
-        st.error("Erro: CLIENT_ID nas configurações de Segredos precisa ser um número inteiro.")
-        return pd.DataFrame()
-
-    # Define qual token usar (input do usuário tem prioridade)
-    token_para_uso = refresh_token_input.strip() if refresh_token_input else secret_token
-
-    if not token_para_uso:
-        st.warning("Nenhum Refresh Token fornecido. Use a barra lateral ou Segredos do Streamlit.")
-        return pd.DataFrame()
-
-    # 2. RENOVAÇÃO DO TOKEN (Chamada segura ao etl.py)
-    access = renew_access_token(
-        client_id=client_id, 
-        client_secret=client_secret, 
-        refresh_token=token_para_uso
-    )
-    
-    if not access:
-        st.error("Falha ao obter Access Token. Verifique suas chaves e Refresh Token no Segredos.")
-        return pd.DataFrame()
-        
-    activities = fetch_all_activities(access, per_page=per_page, max_pages=max_pages)
-    df = transform_activities(activities)
-    return df
-
 # === CONFIGURAÇÃO INICIAL E CSS PERSONALIZADO PARA KPIs ===
 st.set_page_config(page_title="Dashboard Strava", layout="wide")
 st.title("Dashboard Strava — Interativo")
@@ -171,7 +125,6 @@ st.title("Dashboard Strava — Interativo")
 st.markdown(
     """
     <style>
-    /* Estilo para a caixa do KPI */
     div[data-testid="stMetric"] {
         background-color: #FC4C02; 
         border-radius: 10px; 
@@ -179,18 +132,15 @@ st.markdown(
         color: white; 
         overflow: hidden; 
     }
-    /* Estilo para o valor da métrica (o número grande) */
     div[data-testid="stMetricValue"] {
         color: white !important;
         text-align: center; 
     }
-    /* Estilo para o rótulo da métrica (o título) */
     div[data-testid="stMetricLabel"] {
         color: white; 
         text-align: center; 
         font-weight: bold; 
     }
-    /* Centraliza o conteúdo dentro da coluna Streamlit */
     div[data-testid="stMetric"] > div {
         align-items: center;
         justify-content: center;
@@ -200,35 +150,36 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# === BARRA LATERAL (Sidebar) ===
+@st.cache_data(ttl=3600)
+def load_cached_activities(per_page: int, max_pages: int) -> pd.DataFrame:
+    """Função para buscar dados do Strava, usa cache do Streamlit."""
+    return load_activities(per_page=per_page, max_pages=max_pages)
+
 with st.sidebar:
-    st.header("Configuração de Dados")
+    st.header("Configuração")
     per_page = st.number_input("Atividades por página", min_value=10, max_value=200, value=50, step=10)
     max_pages = st.number_input("Máx páginas", min_value=1, max_value=50, value=4)
-    refresh_token_input = st.text_input("Refresh token (se diferente do Segredos)", value="", type="password")
     btn_fetch = st.button("Buscar/Atualizar dados")
 
-# === LÓGICA DE CARREGAMENTO ===
 if btn_fetch:
     st.info("Buscando dados... aguarde")
     st.cache_data.clear()
-    df = load_activities(refresh_token_input or None, per_page, max_pages)
-    # A chamada save_csv agora passa o OUT_DIR
-    save_csv(df, out_dir=OUT_DIR, name="activities.csv") 
-    st.success("Dados carregados e salvos!")
+    df = load_cached_activities(per_page, max_pages)
 else:
-    csv_path = OUT_DIR / "activities.csv"
-    if csv_path.exists():
-        df = pd.read_csv(csv_path, parse_dates=["date"]) 
-        st.info(f"Carregado CSV local: {csv_path.name}")
-    else:
-        # Tenta carregar dados usando o token dos Segredos (para o primeiro carregamento)
-        st.warning(f"Sem dados! O arquivo esperado em '{csv_path.name}' não foi encontrado. Tentando buscar usando Segredos...")
-        df = load_activities(None, per_page, max_pages)
-        if df.empty:
-            st.warning("Falha ao buscar dados da API. Por favor, verifique suas chaves em 'Segredos' ou use o campo 'Refresh token'.")
+    try:
+        csv_path = OUT_DIR / "activities.csv"
+        if csv_path.exists():
+            df = pd.read_csv(csv_path, parse_dates=["date"]) 
+            st.info(f"Carregado CSV local: {csv_path.name}")
+        else:
+            df = pd.DataFrame()
+            st.warning("Sem dados locais. Pressione 'Buscar/Atualizar dados'.")
+    except:
+        df = pd.DataFrame()
+        st.warning("Sem dados disponíveis. Pressione 'Buscar/Atualizar dados'.")
 
 if df.empty:
+    st.error("❌ Não foi possível carregar os dados. Verifique suas credenciais no Streamlit Secrets.")
     st.stop()
 
 # === TRATAMENTO DE TIPOS E FILTROS ===
@@ -242,7 +193,6 @@ if "date" in df.columns:
 with st.sidebar:
     st.subheader("Filtros de Data")
     
-    # Lógica de filtros (Mantida igual)
     anos = sorted(df["date"].dt.year.dropna().unique().tolist(), reverse=True)
     ano_selecionado = st.selectbox("Ano", options=["Todos"] + anos, format_func=lambda x: "Todos" if x == "Todos" else str(x), key="ano")
     
@@ -275,7 +225,6 @@ if dia_selecionado != "Todos":
 
 df_filtered = df[mask].copy()
 
-# Lógica do Período (Mantida igual)
 if ano_selecionado == "Todos" and mes_selecionado == "Todos" and dia_selecionado == "Todos":
     periodo_txt = "Todos os períodos"
 elif ano_selecionado == "Todos":
@@ -295,7 +244,6 @@ total_km = float(df_filtered["distance_km"].sum())
 pace_mean = df_filtered["duration_min"].sum() / total_km if total_km > 0 else None
 total_time_min = float(df_filtered["duration_min"].sum())
 
-# Lógica do Pace Mês Anterior (Mantida igual)
 if mes_selecionado != "Todos" and ano_selecionado != "Todos":
     if mes_selecionado == 1:
         prev_mes, prev_ano = 12, ano_selecionado - 1
@@ -329,7 +277,6 @@ with col1:
     st.subheader("Distância acumulada")
     fig1 = create_distance_over_time(df_filtered)
     
-    # Estilo dos Gráficos (Mantido igual)
     fig1.update_traces(
         line=dict(color=LINE_COLOR, width=2),
         mode='lines+markers', 
@@ -337,7 +284,7 @@ with col1:
     )
     fig1.update_layout(xaxis_title=None, yaxis_title=None) 
     
-    st.plotly_chart(fig1, use_container_width=True) 
+    st.plotly_chart(fig1, width='stretch') 
 
     st.subheader("Tendência de pace")
     fig3 = create_pace_trend(df_filtered)
@@ -349,7 +296,7 @@ with col1:
     )
     fig3.update_layout(xaxis_title=None, yaxis_title=None)
     
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig3, width='stretch')
 
 with col2:
     st.subheader("Tipos de atividade")
@@ -360,12 +307,12 @@ with col2:
         marker_line_color='white'
     )
     
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width='stretch')
 
     st.subheader("Total corridas por km")
     fig_km = total_runs_by_km(df_filtered)
     if fig_km:
-        st.plotly_chart(fig_km, use_container_width=True)
+        st.plotly_chart(fig_km, width='stretch')
 
 st.subheader("Estatísticas mensais")
 fig_monthly = create_monthly_stats(df_filtered)
@@ -382,14 +329,13 @@ fig_monthly.update_layout(
     yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
 ) 
 
-st.plotly_chart(fig_monthly, use_container_width=True)
+st.plotly_chart(fig_monthly, width='stretch')
 
 st.subheader("Pace médio por categoria")
 fig_cat = pace_by_category(df_filtered)
 if fig_cat:
-    st.plotly_chart(fig_cat, use_container_width=True)
+    st.plotly_chart(fig_cat, width='stretch')
 
-# Botão de Download (Mantido igual)
 csv_bytes = df_filtered.to_csv(index=False).encode("utf-8")
 st.download_button("Baixar CSV", data=csv_bytes, file_name="activities.csv", mime="text/csv")
 
