@@ -322,7 +322,20 @@ app = dash.Dash(__name__)
 
 # Linha crucial para o Deploy no Render
 server = app.server
+# ==============================================================================
+# --- HEALTH CHECK PARA RENDER.COM ---
+# ==============================================================================
 
+@app.server.route('/healthz')
+def health_check():
+    """Health check endpoint for Render.com"""
+    return "OK", 200
+
+# --- COMPONENTE HTML PARA ESTILIZAR O KPI ---
+def create_kpi_card(id_suffix, title, value="N/A", color=STRAVA_ORANGE):
+    return html.Div(
+        id=f'kpi-card-{id_suffix}')
+    
 # --- COMPONENTE HTML PARA ESTILIZAR O KPI ---
 def create_kpi_card(id_suffix, title, value="N/A", color=STRAVA_ORANGE):
     return html.Div(
